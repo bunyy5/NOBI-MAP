@@ -1,0 +1,204 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOBI MAPS</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#090f1e;color:white;font-family:Arial,sans-serif}
+header{height:68px;background:#101a30;display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid #263552}
+.logo{font-size:24px;font-weight:900;color:#62d9ff}
+.logo span{color:#a78bfa}
+main{display:flex;height:calc(100vh - 68px)}
+.sidebar{width:340px;background:#101a30;padding:20px;overflow:auto}
+h2{font-size:21px;margin-top:5px}
+.sub{color:#94a3b8;font-size:13px;margin-bottom:22px}
+input{width:100%;padding:14px;border-radius:10px;border:1px solid #334563;background:#192641;color:white;margin:7px 0;outline:none}
+button{padding:13px;border:0;border-radius:10px;background:#38bdf8;color:#061525;font-weight:bold;cursor:pointer;margin:5px 0}
+button:hover{opacity:.85}
+.full{width:100%}
+.secondary{background:#253653;color:white}
+#map{flex:1;min-width:0}
+.status{font-size:13px;color:#9fb2d0;margin:12px 0;line-height:1.5}
+.result{background:#192641;padding:13px;border-radius:10px;margin-top:12px;font-size:13px;line-height:1.7}
+.results button{width:100%;text-align:left;background:#192641;color:white;border:1px solid #334563}
+small{color:#94a3b8}
+@media(max-width:700px){
+main{flex-direction:column;height:auto}
+.sidebar{width:100%;max-height:48vh}
+#map{height:52vh;min-height:350px}
+header{height:60px}
+}
+</style>
+</head>
+<body>
+<header>
+ <div class="logo">NOBI <span>MAPS</span></div>
+ <small>EXPLORE YOUR WORLD</small>
+</header>
+<main>
+<section class="sidebar">
+ <h2>Explore Anywhere</h2>
+ <div class="sub">Your world. Your way.</div>
+
+ <label>Search destination</label>
+ <input id="search" placeholder="Search city or place...">
+ <button class="full" onclick="searchPlace()">Search Places</button>
+
+ <div id="results" class="results"></div>
+
+ <hr style="border-color:#263552;margin:20px 0">
+
+ <button class="full" onclick="getLocation()">◎ My Current Location</button>
+
+ <label>Starting point</label>
+ <input id="start" placeholder="Current location or city">
+
+ <label>Destination</label>
+ <input id="end" placeholder="Where do you want to go?">
+
+ <button class="full" onclick="findRoute()">Find Route →</button>
+ <button class="full secondary" onclick="clearRoute()">Clear Route</button>
+
+ <div id="status" class="status">Map ready. Search for a destination to begin.</div>
+ <div id="info" class="result">Distance and travel information will appear here.</div>
+ <p><small>Map data © OpenStreetMap contributors</small></p>
+</section>
+<div id="map"></div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([20.5937,78.9629],5);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+ maxZoom:19,
+ attribution:'© OpenStreetMap contributors'
+}).addTo(map);
+
+let markers=[];
+let routeLayer=null;
+let currentPosition=null;
+
+function message(t){
+ document.getElementById('status').textContent=t;
+}
+
+async function geocode(place){
+ const url='https://nominatim.openstreetmap.org/search?format=json&limit=5&q='+encodeURIComponent(place);
+ const r=await fetch(url);
+ if(!r.ok) throw Error('Search service unavailable');
+ return await r.json();
+}
+
+function addMarker(lat,lon,title){
+ const marker=L.marker([lat,lon]).addTo(map).bindPopup(title);
+ markers.push(marker);
+ return marker;
+}
+
+async function searchPlace(){
+ const q=document.getElementById('search').value.trim();
+ if(!q){message('Please enter a place name.');return;}
+ try{
+ message('Searching...');
+ const data=await geocode(q);
+ const box=document.getElementById('results');
+ box.innerHTML='';
+ if(!data.length){message('No places found.');return;}
+ data.forEach(p=>{
+  const b=document.createElement('button');
+  b.textContent=p.display_name;
+  b.onclick=()=>{
+   const lat=Number(p.lat),lon=Number(p.lon);
+   map.setView([lat,lon],15);
+   addMarker(lat,lon,p.display_name).openPopup();
+   document.getElementById('end').value=p.display_name;
+   message('Destination selected.');
+  };
+  box.appendChild(b);
+ });
+ message(data.length+' places found. Select one.');
+ }catch(e){message('Search failed. Please try again.');}
+}
+
+function getLocation(){
+ if(!navigator.geolocation){
+  message('GPS is not supported by this browser.');return;
+ }
+ message('Requesting location permission...');
+ navigator.geolocation.getCurrentPosition(pos=>{
+  const lat=pos.coords.latitude;
+  const lon=pos.coords.longitude;
+  currentPosition=[lat,lon];
+  map.setView(currentPosition,16);
+  addMarker(lat,lon,'Your current location').openPopup();
+  document.getElementById('start').value=lat+','+lon;
+  message('Your current location found!');
+ },err=>{
+  message('Location unavailable. Allow location permission and try again.');
+ },{enableHighAccuracy:true,timeout:15000});
+}
+
+async function findRoute(){
+ const a=document.getElementById('start').value.trim();
+ const b=document.getElementById('end').value.trim();
+ if(!a||!b){message('Enter both starting point and destination.');return;}
+ try{
+ message('Finding route...');
+ const start=await geocode(a);
+ const end=await geocode(b);
+ if(!start.length||!end.length){message('Could not find one of the places.');return;}
+
+ const lat1=Number(start[0].lat),lon1=Number(start[0].lon);
+ const lat2=Number(end[0].lat),lon2=Number(end[0].lon);
+
+ const url=`https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
+ const response=await fetch(url);
+ if(!response.ok)throw Error('Route service unavailable');
+ const data=await response.json();
+ if(data.code!=='Ok'||!data.routes.length)throw Error('No route found');
+
+ if(routeLayer)map.removeLayer(routeLayer);
+ markers.forEach(m=>map.removeLayer(m));
+ markers=[];
+
+ const route=data.routes[0];
+ routeLayer=L.geoJSON(route.geometry,{
+  style:{color:'#38bdf8',weight:6,opacity:.9}
+ }).addTo(map);
+
+ addMarker(lat1,lon1,'Starting point');
+ addMarker(lat2,lon2,'Destination');
+
+ map.fitBounds(routeLayer.getBounds(),{padding:[35,35]});
+
+ const km=(route.distance/1000).toFixed(1);
+ const mins=Math.round(route.duration/60);
+ document.getElementById('info').innerHTML=
+ `<b>Route found!</b><br>Distance: ${km} km<br>Estimated driving time: ${mins} minutes<br><small>Estimate only; actual time may vary.</small>`;
+ message('Your route is ready!');
+ }catch(e){
+ message('Could not calculate route. Try different places later.');
+ }
+}
+
+function clearRoute(){
+ if(routeLayer){map.removeLayer(routeLayer);routeLayer=null;}
+ markers.forEach(m=>map.removeLayer(m));
+ markers=[];
+ document.getElementById('info').textContent='Route cleared.';
+ message('Map cleared.');
+}
+
+map.on('click',e=>{
+ document.getElementById('end').value=e.latlng.lat.toFixed(5)+','+e.latlng.lng.toFixed(5);
+ addMarker(e.latlng.lat,e.latlng.lng,'Selected map location');
+ message('Map location selected as destination.');
+});
+</script>
+</body>
+</html>
